@@ -51,7 +51,9 @@ so editing feels live. It runs on both macOS and Linux.
 Every option is discovered **dynamically** from your installed Ghostty
 (`ghostty +show-config --default --docs`), so the tool always matches your
 version — nothing is hard-coded. On this machine that's ~200 options across 13
-categories.
+categories. Options that only apply to the *other* operating system (macOS-only
+settings on Linux, GTK/X11 settings on macOS) are **hidden automatically** so you
+only ever see what's relevant to the machine you're on.
 
 ## The live loop
 
@@ -69,7 +71,9 @@ categories.
 - **Safe:** every change is validated by Ghostty itself before it's saved. Bad
   values never reach your config.
 - **Reversible:** a dated backup (`config.spookiui.YYYYMMDD.bak`) is made on the
-  first change of the day, and the TUI can revert an entire session with `R`.
+  first change of the day, the TUI can revert an entire session with `R`, and you
+  can wipe the config back to Ghostty's built-in defaults with `X` (a backup is
+  still kept).
 - **Live preview:** while picking a theme, font, or enum value, each highlighted
   option is applied as you scroll — cancel and it snaps back to where you were.
 
@@ -94,6 +98,7 @@ categories.
 | `a` | toggle **auto-apply** (live ↔ staged) |
 | `s` | save + reload now · `r` re-trigger reload |
 | `R` | revert everything to session start |
+| `X` | wipe config & restore **all** Ghostty defaults (backup kept) |
 | `d` | show everything you've changed |
 | `?` | help · `q` quit |
 
@@ -116,10 +121,12 @@ Everything the TUI does is also available non-interactively:
 
 ```bash
 ./spookiui.py list [category]      # list options (＊ = changed from default)
+./spookiui.py list [category] --all # include options for the other OS
 ./spookiui.py get   <key>          # print an option's current value
 ./spookiui.py doc   <key>          # show an option's documentation + choices
 ./spookiui.py set   <key> <value>… # set (writes + reloads live); repeat value for lists
 ./spookiui.py set   <key> <v> --no-reload   # write without reloading
+./spookiui.py reset --yes          # clear config & restore all Ghostty defaults (backup kept)
 ./spookiui.py reload               # trigger a live reload
 ./spookiui.py validate             # validate the current config
 ./spookiui.py themes               # list installed themes

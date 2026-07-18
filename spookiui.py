@@ -58,6 +58,9 @@ IS_LINUX = sys.platform.startswith("linux")
 # Linux SIGUSR2). Other platforms write+validate but can't auto-reload.
 CAN_RELOAD = IS_MACOS or IS_LINUX
 INSIDE_GHOSTTY = os.environ.get("TERM_PROGRAM") == "ghostty"
+# The platform we're running on, for hiding OS-exclusive options. On anything
+# other than macOS/Linux we don't hide anything (we can't say what's relevant).
+CURRENT_PLATFORM = "macos" if IS_MACOS else ("linux" if IS_LINUX else None)
 
 
 def _run(args: list[str], timeout: float = 20.0) -> subprocess.CompletedProcess:
@@ -120,6 +123,7 @@ class Option:
     is_list: bool = False
     reload_note: str = ""       # non-empty when the option is not fully live
     category: str = "Advanced"
+    platform: str | None = None  # "macos"/"linux" if OS-exclusive, else None
 
     @property
     def is_color(self) -> bool:
@@ -266,6 +270,61 @@ def _categorize(name: str) -> str:
     return "Advanced"
 
 
+# Doc phrases (all lowercase) that mark an option as exclusive to one OS. Kept
+# deliberately narrow and paired with a "mentions the other OS positively" guard
+# so cross-platform options (e.g. "supported on macOS and Linux") aren't hidden.
+_MAC_ONLY_HINTS = (
+    "only supported on macos", "only implemented on macos", "only works on macos",
+    "supported currently on macos", "no effect on linux", "no effect on other",
+    "only visible with the native macos",
+)
+_LINUX_ONLY_HINTS = (
+    "only supported on linux", "only implemented on linux", "only supported on gtk",
+    "only supported in the gtk", "only applies to gtk", "only affects gtk builds",
+    "relevant on linux", "only has an effect on linux",
+    "feature is only supported on gtk", "configuration only applies to gtk",
+    "no effect on macos",
+)
+# If any of these appear, the option touches both platforms — never hide it.
+_CROSS_PLATFORM_HINTS = (
+    "macos and linux", "macos and certain linux", "macos and on some linux",
+    "macos and some linux", "linux and macos", "on macos and", "macos, linux",
+    "macos and windows",
+)
+
+
+def _platform_of(opt: Option) -> str | None:
+    """'macos' or 'linux' if the option is exclusive to that OS, else None.
+
+    Keys off the option name prefix first (unambiguous) and falls back to
+    scanning the scraped docs. Like the rest of the schema layer this stays
+    tolerant of Ghostty version drift — an unrecognised phrase just means the
+    option is treated as cross-platform and shown everywhere.
+    """
+    name = opt.name
+    if name.startswith("macos"):
+        return "macos"
+    if name.startswith(("gtk", "x11", "adw", "linux")):
+        return "linux"
+    doc = opt.doc.lower()
+    if any(p in doc for p in _CROSS_PLATFORM_HINTS):
+        return None
+    mac_only = any(p in doc for p in _MAC_ONLY_HINTS)
+    linux_only = any(p in doc for p in _LINUX_ONLY_HINTS)
+    if mac_only and not linux_only:
+        return "macos"
+    if linux_only and not mac_only:
+        return "linux"
+    return None
+
+
+def platform_visible(opt: Option) -> bool:
+    """Whether an option should be shown on the current OS."""
+    if CURRENT_PLATFORM is None or opt.platform is None:
+        return True
+    return opt.platform == CURRENT_PLATFORM
+
+
 def load_schema() -> dict[str, Option]:
     """Parse `ghostty +show-config --default --docs` into typed Options."""
     if not GHOSTTY:
@@ -308,6 +367,7 @@ def load_schema() -> dict[str, Option]:
             o.is_list = True
         _classify(o)
         o.category = _categorize(name)
+        o.platform = _platform_of(o)
     return options
 
 
@@ -683,6 +743,30 @@ class Session:
             reload_ghostty()
         return True, "reverted to session start"
 
+    def restore_defaults(self) -> tuple[bool, str]:
+        """Clear the config file entirely so Ghostty falls back to every one of
+        its built-in defaults. Follows the same validate → back up → write →
+        reload → rollback discipline as every other mutation path."""
+        snap = list(self.cfg.lines)
+        blank = (
+            self.cfg.MANAGED_HEADER + "\n"
+            "# Configuration reset to Ghostty defaults by SpookiUI.\n"
+        )
+        ok, errs = validate(blank)
+        if not ok:
+            self.cfg.lines = snap
+            return False, "invalid: " + (errs[0] if errs else "validation failed")
+        self.ensure_backup()
+        self.cfg.lines = blank.rstrip("\n").split("\n")
+        self.cfg.write(blank)
+        self.dirty = False
+        if self.auto_apply and CAN_RELOAD:
+            r_ok, msg = reload_ghostty()
+            if r_ok:
+                return True, "restored Ghostty defaults + reloaded live"
+            return True, "restored Ghostty defaults (reload: " + msg + ")"
+        return True, "restored Ghostty defaults"
+
     def overrides(self) -> list[tuple[str, str]]:
         """Options the user has changed from default (name, current value)."""
         out = []
@@ -772,13 +856,15 @@ class App:
         self.search = ""
         self.search_mode = False      # showing flat search results
 
-        self.categories = [c for c in CATEGORY_ORDER
-                           if any(o.category == c for o in sess.schema.values())]
-        # options per category, sorted (overridden first, then alpha)
+        # options per category, sorted alpha — OS-exclusive options that don't
+        # apply to the current platform are hidden.
         self.by_cat: dict[str, list[str]] = {}
-        for c in self.categories:
-            names = sorted(n for n, o in sess.schema.items() if o.category == c)
-            self.by_cat[c] = names
+        for c in CATEGORY_ORDER:
+            names = sorted(n for n, o in sess.schema.items()
+                           if o.category == c and platform_visible(o))
+            if names:
+                self.by_cat[c] = names
+        self.categories = [c for c in CATEGORY_ORDER if c in self.by_cat]
 
         self._swatch_cache: dict[int, int] = {}
         self._next_pair = 32
@@ -1085,6 +1171,11 @@ class App:
                 ok, m = self.sess.revert_all()
                 self._msg(m, "ok")
             return True
+        if ch in (ord("X"),):
+            if self._confirm("Wipe config & restore ALL Ghostty defaults? (backup kept)"):
+                ok, m = self.sess.restore_defaults()
+                self._msg(m, "ok" if ok else "error")
+            return True
         if ch in (ord("["),):
             self.doc_scroll = max(0, self.doc_scroll - 1); return True
         if ch in (ord("]"),):
@@ -1129,7 +1220,8 @@ class App:
     def _enter_search(self):
         self.search = ""
         self.search_mode = True
-        self._search_results = sorted(self.sess.schema.keys())
+        self._search_results = sorted(
+            n for n, o in self.sess.schema.items() if platform_visible(o))
         self.opt_idx = self.opt_scroll = 0
 
     def _handle_search_key(self, ch) -> bool:
@@ -1160,7 +1252,7 @@ class App:
         q = self.search.lower()
         self._search_results = sorted(
             n for n, o in self.sess.schema.items()
-            if q in n.lower() or q in o.doc.lower()
+            if platform_visible(o) and (q in n.lower() or q in o.doc.lower())
         )
         self.opt_idx = self.opt_scroll = 0
         self._msg(f"search: {self.search}   ({len(self._search_results)} matches)", "info")
@@ -1593,8 +1685,11 @@ class App:
             "  a   toggle auto-apply (live vs. staged)",
             "  s   save + reload now      r   re-trigger reload",
             "  R   revert everything to session start",
+            "  X   wipe config & restore all Ghostty defaults (backup kept)",
             "  d   show what you've changed",
             "  q   quit",
+            "",
+            "Options that only apply to the other OS are hidden automatically.",
             "",
             "Live reload works by clicking Ghostty's 'Reload Configuration'",
             "menu item on macOS, or sending it SIGUSR2 on Linux. A timestamped",
@@ -1639,8 +1734,10 @@ class App:
 
 def cli_list(sess: Session, args) -> int:
     cats = CATEGORY_ORDER if not args.category else [args.category]
+    show_all = getattr(args, "all", False)
     for cat in cats:
-        names = sorted(n for n, o in sess.schema.items() if o.category == cat)
+        names = sorted(n for n, o in sess.schema.items() if o.category == cat
+                       and (show_all or platform_visible(o)))
         if not names:
             continue
         print(f"\n== {cat} ==")
@@ -1708,6 +1805,17 @@ def cli_set(sess: Session, args) -> int:
     return 0 if rok else 0
 
 
+def cli_reset(sess: Session, args) -> int:
+    if not args.yes:
+        print("This clears your config file and restores every Ghostty default.\n"
+              f"A dated backup of {sess.cfg.path} is kept.\n"
+              "Re-run with --yes to proceed.", file=sys.stderr)
+        return 1
+    ok, m = sess.restore_defaults()
+    print(m)
+    return 0 if ok else 1
+
+
 def cli_reload(sess: Session, args) -> int:
     ok, m = reload_ghostty()
     print(m)
@@ -1750,6 +1858,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     sp = sub.add_parser("list", help="list options (optionally by category)")
     sp.add_argument("category", nargs="?", help="category name to filter by")
+    sp.add_argument("--all", action="store_true",
+                    help="include options for other operating systems")
     sp.set_defaults(func=cli_list)
 
     sp = sub.add_parser("get", help="print an option's current value")
@@ -1765,6 +1875,10 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("value", nargs="+", help="value(s); repeat for list options")
     sp.add_argument("--no-reload", action="store_true", help="write without live reload")
     sp.set_defaults(func=cli_set)
+
+    sp = sub.add_parser("reset", help="restore Ghostty defaults (clears your config file)")
+    sp.add_argument("--yes", action="store_true", help="confirm the reset (required)")
+    sp.set_defaults(func=cli_reset)
 
     sp = sub.add_parser("reload", help="trigger Ghostty to reload its config")
     sp.set_defaults(func=cli_reload)
