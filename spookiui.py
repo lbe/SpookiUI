@@ -811,6 +811,161 @@ def list_fonts() -> list[str]:
     return out
 
 
+_ACTIONS_CACHE: list[str] | None = None
+_ACTION_RE = re.compile(r"^[a-z][a-z0-9_]*$")
+
+# Keybind builder: modifiers Ghostty accepts, plus a curated list of named keys
+# for the "special key" picker (letters/digits are captured by pressing them).
+KEYBIND_MODS = ["super", "ctrl", "alt", "shift"]
+KEYBIND_MOD_ALIASES = {
+    "cmd": "super", "command": "super", "control": "ctrl",
+    "opt": "alt", "option": "alt", "meta": "alt",
+}
+KEYBIND_NAMED_KEYS = [
+    "space", "enter", "tab", "escape", "backspace", "delete", "insert",
+    "home", "end", "page_up", "page_down", "up", "down", "left", "right",
+    "f1", "f2", "f3", "f4", "f5", "f6", "f7", "f8", "f9", "f10", "f11", "f12",
+    "minus", "equal", "plus", "comma", "period", "slash", "backslash",
+    "semicolon", "apostrophe", "grave_accent", "left_bracket", "right_bracket",
+]
+
+
+def list_actions() -> list[str]:
+    """Keybind action names Ghostty knows about (for the keybind builder)."""
+    global _ACTIONS_CACHE
+    if _ACTIONS_CACHE is not None:
+        return _ACTIONS_CACHE
+    acts: list[str] = []
+    if GHOSTTY:
+        proc = _run([GHOSTTY, "+list-actions"], timeout=20)
+        for line in (proc.stdout or proc.stderr).splitlines():
+            line = line.strip()
+            if _ACTION_RE.match(line):
+                acts.append(line)
+    seen, out = set(), []
+    for a in acts:
+        if a not in seen:
+            seen.add(a)
+            out.append(a)
+    _ACTIONS_CACHE = out
+    return out
+
+
+# --------------------------------------------------------------------------- #
+#  Theme colour resolution (for the live colour preview)
+# --------------------------------------------------------------------------- #
+#
+# Themes are plain Ghostty config fragments (palette/background/foreground/…)
+# living in the user's themes dir or the Ghostty resources dir. We parse them
+# directly so we can render a colour card without applying anything. Everything
+# here degrades gracefully: a theme we can't find or read just yields no card.
+
+def ghostty_resources_dir() -> str | None:
+    """Best-effort path to the Ghostty resources dir (contains `themes/`)."""
+    d = os.environ.get("GHOSTTY_RESOURCES_DIR")
+    if d and os.path.isdir(d):
+        return d
+    cands = []
+    if IS_MACOS:
+        cands += [
+            "/Applications/Ghostty.app/Contents/Resources/ghostty",
+            os.path.expanduser(
+                "~/Applications/Ghostty.app/Contents/Resources/ghostty"),
+        ]
+    if GHOSTTY:
+        # <prefix>/bin/ghostty  ->  <prefix>/share/ghostty
+        prefix = os.path.dirname(os.path.dirname(os.path.realpath(GHOSTTY)))
+        cands.append(os.path.join(prefix, "share", "ghostty"))
+    cands += ["/usr/share/ghostty", "/usr/local/share/ghostty",
+              "/opt/homebrew/share/ghostty"]
+    for c in cands:
+        if c and os.path.isdir(c):
+            return c
+    return None
+
+
+def theme_search_dirs() -> list[str]:
+    dirs = []
+    xdg = os.environ.get("XDG_CONFIG_HOME")
+    if xdg:
+        dirs.append(os.path.join(xdg, "ghostty", "themes"))
+    dirs.append(os.path.expanduser("~/.config/ghostty/themes"))
+    if IS_MACOS:
+        dirs.append(os.path.expanduser(
+            "~/Library/Application Support/com.mitchellh.ghostty/themes"))
+    rd = ghostty_resources_dir()
+    if rd:
+        dirs.append(os.path.join(rd, "themes"))
+    return dirs
+
+
+def find_theme_file(name: str) -> str | None:
+    name = name.strip()
+    if not name:
+        return None
+    for d in theme_search_dirs():
+        p = os.path.join(d, name)
+        if os.path.isfile(p):
+            return p
+    return None
+
+
+def theme_variant_name(value: str) -> str:
+    """A theme value may be composite (`light:A,dark:B`); pick one name to
+    preview, preferring the dark variant."""
+    value = value.strip()
+    if "," not in value and ":" not in value:
+        return value
+    picks, first = {}, None
+    for part in value.split(","):
+        part = part.strip()
+        if ":" in part:
+            k, _, v = part.partition(":")
+            picks[k.strip().lower()] = v.strip()
+        elif first is None:
+            first = part
+    return picks.get("dark") or picks.get("light") or first or value
+
+
+_THEME_COLOR_CACHE: dict[str, dict | None] = {}
+
+
+def parse_theme_colors(name: str) -> dict | None:
+    """Parse a theme file into {palette:{i:hex}, foreground, background, cursor}."""
+    if name in _THEME_COLOR_CACHE:
+        return _THEME_COLOR_CACHE[name]
+    path = find_theme_file(name)
+    res: dict | None = None
+    if path:
+        palette, fg, bg, cursor = {}, None, None, None
+        try:
+            with open(path, encoding="utf-8", errors="replace") as fh:
+                for line in fh:
+                    line = line.strip()
+                    if not line or line.startswith("#") or "=" not in line:
+                        continue
+                    key, _, val = line.partition("=")
+                    key, val = key.strip(), val.strip()
+                    if key == "palette":
+                        idx, _, col = val.partition("=")
+                        try:
+                            palette[int(idx)] = col.strip()
+                        except ValueError:
+                            pass
+                    elif key == "background":
+                        bg = val
+                    elif key == "foreground":
+                        fg = val
+                    elif key == "cursor-color":
+                        cursor = val
+            res = {"palette": palette, "foreground": fg,
+                   "background": bg, "cursor": cursor}
+        except OSError:
+            res = None
+    _THEME_COLOR_CACHE[name] = res
+    return res
+
+
 # --------------------------------------------------------------------------- #
 #  Session controller shared by TUI + CLI
 # --------------------------------------------------------------------------- #
@@ -1023,6 +1178,7 @@ class App:
         self.categories = [c for c in CATEGORY_ORDER if c in self.by_cat]
 
         self._swatch_cache: dict[int, int] = {}
+        self._pair_cache: dict[tuple, int] = {}   # (fg_idx, bg_idx) -> pair
         self._next_pair = 32
         self._init_colors()
 
@@ -1088,6 +1244,99 @@ class App:
             return None
         self._swatch_cache[idx] = pair
         return pair
+
+    def color_pair(self, fg_hex, bg_hex=None):
+        """A curses pair for an explicit fg (and optional bg) hex, cached.
+        Returns None when the terminal can't do 256 colours."""
+        c = self.curses
+        if c.COLORS < 256:
+            return None
+        frgb = parse_hex(fg_hex) if fg_hex else None
+        brgb = parse_hex(bg_hex) if bg_hex else None
+        fi = rgb_to_256(*frgb) if frgb else -1
+        bi = rgb_to_256(*brgb) if brgb else -1
+        key = (fi, bi)
+        if key in self._pair_cache:
+            return self._pair_cache[key]
+        if self._next_pair >= min(c.COLOR_PAIRS, 250):
+            return None
+        pair = self._next_pair
+        self._next_pair += 1
+        try:
+            c.init_pair(pair, fi, bi)
+        except Exception:
+            return None
+        self._pair_cache[key] = pair
+        return pair
+
+    # ---- colour preview ------------------------------------------------- #
+    def _effective_colors(self, theme_override=None) -> dict:
+        """Resolve the colours that would actually render: Ghostty defaults,
+        then the active (or overridden) theme, then explicit config overrides.
+        Pass theme_override to preview a theme without touching config."""
+        schema = self.sess.schema
+        pal: dict[int, str] = {}
+        popt = schema.get("palette")
+        if popt:
+            for d in popt.defaults:
+                idx, _, col = d.partition("=")
+                try:
+                    pal[int(idx)] = col.strip()
+                except ValueError:
+                    pass
+        fg = schema["foreground"].default if "foreground" in schema else "#ffffff"
+        bg = schema["background"].default if "background" in schema else "#000000"
+        cursor = None
+
+        theme_val = (theme_override if theme_override is not None
+                     else self.sess.effective("theme"))
+        if theme_val:
+            tc = parse_theme_colors(theme_variant_name(theme_val))
+            if tc:
+                pal.update(tc["palette"])
+                fg = tc["foreground"] or fg
+                bg = tc["background"] or bg
+                cursor = tc["cursor"] or cursor
+
+        if theme_override is None:  # layer explicit config overrides on top
+            fo = self.sess.cfg.get_value("foreground")
+            if fo:
+                fg = fo
+            bo = self.sess.cfg.get_value("background")
+            if bo:
+                bg = bo
+            for v in self.sess.cfg.get_values("palette"):
+                idx, _, col = v.partition("=")
+                try:
+                    pal[int(idx)] = col.strip()
+                except ValueError:
+                    pass
+
+        palette = [pal.get(i, "#000000") for i in range(16)]
+        return {"palette": palette, "fg": fg, "bg": bg, "cursor": cursor}
+
+    def _draw_color_preview(self, y, x, width, colors) -> int:
+        """Render a compact theme card (two swatch rows + a sample line).
+        Returns the number of rows drawn (0 if colours are unavailable)."""
+        c = self.curses
+        if not self.has_swatch or c.COLORS < 256 or width < 18:
+            return 0
+        pal, fg, bg = colors["palette"], colors["fg"], colors["bg"]
+        rows = 0
+        for band in range(2):
+            yy = y + band
+            xx = x
+            for i in range(8):
+                pair = self.color_pair(pal[band * 8 + i])
+                self.safe(yy, xx, "██", c.color_pair(pair) if pair else c.color_pair(4))
+                xx += 3
+            rows += 1
+        sample = " AaBbCc 123 #!$ "
+        pair = self.color_pair(fg, bg)
+        self.safe(y + 2, x, sample[:width],
+                  (c.color_pair(pair) if pair else c.color_pair(4)) | c.A_BOLD)
+        rows += 1
+        return rows
 
     # ---- geometry helpers ---------------------------------------------- #
     def dims(self):
@@ -1263,6 +1512,13 @@ class App:
         if opt.values and opt.kind in ("enum", "bool"):
             self.safe(y, x, "choices: " + ", ".join(opt.values), c.color_pair(5)); y += 1
         y += 1
+        # live colour preview for colour-related options
+        if (opt.name == "theme" or opt.kind in ("color", "theme", "palette")
+                or opt.category == "Colors & Theme") and y + 3 <= bottom:
+            self.safe(y, x, "─ preview " + "─" * max(0, width - 10), c.color_pair(4)); y += 1
+            used = self._draw_color_preview(y, x, width, self._effective_colors())
+            if used:
+                y += used + 1
         # docs
         self.safe(y, x, "─ docs " + "─" * max(0, width - 7), c.color_pair(4)); y += 1
         doc_lines = self._wrap(opt.doc or "(no documentation)", width)
@@ -1568,7 +1824,8 @@ class App:
         snap = self._snap()
         cur = self.sess.effective(opt.name)
         choice = self._picker("theme", themes, cur,
-                              preview=lambda v: self._commit_scalar(opt, v, preview=True))
+                              preview=lambda v: self._commit_scalar(opt, v, preview=True),
+                              side=lambda item, sx, sy, sw: self._draw_theme_card(item, sx, sy, sw))
         if choice is None:
             self._restore(snap); self._msg("cancelled", "info"); return
         ok, errs = self._commit_scalar(opt, choice)
@@ -1783,16 +2040,151 @@ class App:
             elif ch in (c.KEY_DOWN, ord("j")):
                 sel = min(len(values) - 1, sel + 1) if values else 0
             elif ch in (ord("a"),):
-                nv = self._line_editor("add › ", "", hint=hint_add)
+                nv = (self._edit_keybind_form() if opt.name == "keybind"
+                      else self._line_editor("add › ", "", hint=hint_add))
                 if nv:
                     values.append(nv.strip()); sel = len(values) - 1
             elif ch in (ord("e"),) and values:
-                nv = self._line_editor("edit › ", values[sel], hint=hint_add)
+                nv = (self._edit_keybind_form(values[sel]) if opt.name == "keybind"
+                      else self._line_editor("edit › ", values[sel], hint=hint_add))
                 if nv is not None:
                     values[sel] = nv.strip()
             elif ch in (ord("d"), c.KEY_DC) and values:
                 del values[sel]
                 sel = max(0, min(sel, len(values) - 1))
+
+    # ---- keybind builder ------------------------------------------------ #
+    def _assemble_keybind(self, state) -> str:
+        mods = [m for m in KEYBIND_MODS if state["mods"][m]]
+        trigger = "+".join(mods + ([state["key"]] if state["key"] else []))
+        action = state["action"]
+        if action and state["args"].strip():
+            action = f"{action}:{state['args'].strip()}"
+        return f"{trigger}={action}"
+
+    def _parse_keybind_into(self, initial: str, state) -> None:
+        trig, _, act = initial.partition("=")
+        parts = [p for p in trig.split("+") if p]
+        if parts:
+            state["key"] = parts[-1].strip()
+            for m in parts[:-1]:
+                mm = KEYBIND_MOD_ALIASES.get(m.strip().lower(), m.strip().lower())
+                if mm in state["mods"]:
+                    state["mods"][mm] = True
+        action, _, args = act.strip().partition(":")
+        state["action"] = action.strip()
+        state["args"] = args.strip()
+
+    def _validate_keybind(self, binding: str) -> bool:
+        ok, _ = validate(f"keybind = {binding}\n")
+        return ok
+
+    def _edit_keybind_form(self, initial: str | None = None) -> str | None:
+        """Guided keybind builder: toggle modifiers, capture/pick a key, choose
+        an action from Ghostty's own list. Cross-platform — terminals can't
+        report ⌘/Super as a keypress, so modifiers are explicit toggles rather
+        than captured. Returns a validated `trigger=action` string, or None."""
+        c = self.curses
+        state = {"mods": {m: False for m in KEYBIND_MODS},
+                 "key": "", "action": "", "args": ""}
+        if initial:
+            self._parse_keybind_into(initial, state)
+        row, modsel, error = 0, 0, ""
+        NROWS = 5   # 0 mods, 1 key, 2 action, 3 args, 4 save
+        while True:
+            self._draw_keybind_form(state, row, modsel, error)
+            ch = self.scr.getch()
+            if ch in (27,):
+                return None
+            if ch in (c.KEY_DOWN, ord("\t")):
+                row = (row + 1) % NROWS; continue
+            if ch in (c.KEY_UP, c.KEY_BTAB, 353):
+                row = (row - 1) % NROWS; continue
+            error = ""
+            if row == 0:                       # modifiers
+                if ch in (c.KEY_LEFT,):
+                    modsel = (modsel - 1) % len(KEYBIND_MODS)
+                elif ch in (c.KEY_RIGHT,):
+                    modsel = (modsel + 1) % len(KEYBIND_MODS)
+                elif ch in (ord(" "),):
+                    m = KEYBIND_MODS[modsel]; state["mods"][m] = not state["mods"][m]
+            elif row == 1:                     # key
+                if ch in (ord("\n"), c.KEY_ENTER, 10, 13):
+                    pick = self._picker("special key", KEYBIND_NAMED_KEYS, state["key"])
+                    if pick:
+                        state["key"] = pick
+                elif ch in (c.KEY_BACKSPACE, 127, 8, c.KEY_DC):
+                    state["key"] = ""
+                elif 32 < ch < 127:            # printable (not space) -> capture it
+                    k = chr(ch)
+                    state["key"] = k.lower() if k.isalpha() else k
+            elif row == 2:                     # action
+                if ch in (ord("\n"), c.KEY_ENTER, 10, 13):
+                    acts = list_actions()
+                    if acts:
+                        pick = self._picker("action", acts, state["action"])
+                        if pick:
+                            state["action"] = pick
+                    else:
+                        error = "could not load Ghostty actions"
+            elif row == 3:                     # optional args
+                if ch in (c.KEY_BACKSPACE, 127, 8):
+                    state["args"] = state["args"][:-1]
+                elif ch in (ord("\n"), c.KEY_ENTER, 10, 13):
+                    row = 4
+                elif 32 <= ch < 127:
+                    state["args"] += chr(ch)
+            elif row == 4:                     # save
+                if ch in (ord("\n"), c.KEY_ENTER, 10, 13):
+                    if not state["key"]:
+                        error, row = "pick a key first", 1; continue
+                    if not state["action"]:
+                        error, row = "pick an action first", 2; continue
+                    result = self._assemble_keybind(state)
+                    if not self._validate_keybind(result):
+                        error = f"Ghostty rejected: {result}"; continue
+                    return result
+
+    def _draw_keybind_form(self, state, row, modsel, error):
+        c = self.curses
+        self.scr.erase()
+        h, w = self.dims()
+        self.safe(0, 0, " build keybind ".ljust(w), c.color_pair(1) | c.A_BOLD)
+        y = 2
+        self.safe(y, 2, "Modifiers:", c.color_pair(4))
+        x = 14
+        for i, m in enumerate(KEYBIND_MODS):
+            box = "[x]" if state["mods"][m] else "[ ]"
+            label = f"{box} {m}"
+            focused = (row == 0 and i == modsel)
+            self.safe(y, x, label, c.color_pair(3) | c.A_BOLD if focused else c.color_pair(5))
+            x += len(label) + 2
+        if IS_MACOS:
+            self.safe(y + 1, 14, "(super = ⌘ Command on macOS)", c.color_pair(4))
+        y += 3
+
+        def field(label, val, r, hint):
+            focused = (row == r)
+            self.safe(y, 2, f"{label:9}", c.color_pair(4))
+            self.safe(y, 12, (val or "—")[:24],
+                      c.color_pair(3) | c.A_BOLD if focused else c.color_pair(5))
+            self.safe(y, 40, hint, c.color_pair(4))
+
+        field("Key:", state["key"], 1, "type a key · Enter → named-key list"); y += 1
+        field("Action:", state["action"], 2, "Enter → choose from Ghostty actions"); y += 1
+        field("Args:", state["args"], 3, "optional, e.g. 1  or  mixed"); y += 2
+
+        result = self._assemble_keybind(state)
+        self.safe(y, 2, "Result: ", c.color_pair(4))
+        self.safe(y, 10, result, c.color_pair(6) | c.A_BOLD); y += 2
+        self.safe(y, 2, "▸ Save this binding",
+                  c.color_pair(3) | c.A_BOLD if row == 4 else c.color_pair(6)); y += 1
+        if error:
+            self.safe(y + 1, 2, "⚠ " + error, c.color_pair(7) | c.A_BOLD)
+        self.safe(h - 1, 0,
+                  " Tab/↑↓ field · ←/→ pick mod · Space toggle · Enter pick/save · Esc cancel ".ljust(w),
+                  c.color_pair(1))
+        self.scr.refresh()
 
     # ---- primitive input widgets --------------------------------------- #
     def _prompt_bar(self, label, buf, hint):
@@ -1832,9 +2224,11 @@ class App:
         finally:
             c.curs_set(0)
 
-    def _picker(self, title, items, current, preview=None):
+    def _picker(self, title, items, current, preview=None, side=None):
         """Scrollable, type-to-filter picker. Live-previews the highlighted
-        item (debounced) when auto-apply is on. Returns choice or None."""
+        item (debounced) when auto-apply is on. `side`, if given, is a callback
+        (item, x, y, width) that draws a panel to the right of the list.
+        Returns choice or None."""
         c = self.curses
         query = ""
         filtered = list(items)
@@ -1852,7 +2246,7 @@ class App:
                     if want != last_preview and (time.monotonic() - last_move) > 0.11:
                         preview(want)
                         last_preview = want
-                self._draw_picker(title, query, filtered, sel, current)
+                self._draw_picker(title, query, filtered, sel, current, side)
                 ch = self.scr.getch()
                 if ch == -1:
                     continue
@@ -1880,7 +2274,7 @@ class App:
         finally:
             self.scr.timeout(-1)
 
-    def _draw_picker(self, title, query, filtered, sel, current):
+    def _draw_picker(self, title, query, filtered, sel, current, side=None):
         c = self.curses
         self.scr.erase()
         h, w = self.dims()
@@ -1888,6 +2282,12 @@ class App:
         self.safe(1, 0, f" filter: {query}", c.color_pair(5) | c.A_BOLD)
         top = 3
         rows = h - 5
+        # reserve a right-hand panel for `side` when the screen is wide enough
+        side_x = None
+        list_w = w
+        if side and w >= 56:
+            list_w = w // 2
+            side_x = list_w + 2
         scroll = max(0, sel - rows + 1)
         for r in range(rows):
             i = scroll + r
@@ -1904,14 +2304,30 @@ class App:
             if rgb:
                 pair = self.swatch_pair(item.split("=")[-1] if "=" in item else item)
                 self.safe(y, x + 2, "██ ", c.color_pair(pair) if pair else attr)
-                self.safe(y, x + 5, item[: w - x - 6], attr)
+                self.safe(y, x + 5, item[: list_w - x - 6], attr)
             else:
-                self.safe(y, x + 2, item[: w - x - 3], attr)
+                self.safe(y, x + 2, item[: list_w - x - 3], attr)
+        if side_x is not None and filtered:
+            side(filtered[sel], side_x, top, w - side_x - 1)
         hint = " type to filter · ↑↓ move · Enter select · Esc cancel "
         if self.sess.auto_apply:
             hint = " ● LIVE PREVIEW ·" + hint
         self.safe(h - 1, 0, hint.ljust(w), c.color_pair(1))
         self.scr.refresh()
+
+    def _draw_theme_card(self, name, x, y, width):
+        """Right-hand panel in the theme picker: the highlighted theme's colours."""
+        c = self.curses
+        self.safe(y, x, name[:width], c.color_pair(10) | c.A_BOLD)
+        colors = self._effective_colors(theme_override=name)
+        used = self._draw_color_preview(y + 2, x, width, colors)
+        if not used:
+            hint = ("(256-colour terminal needed for preview)"
+                    if c.COLORS < 256 else "(no colour data for this theme)")
+            self.safe(y + 2, x, hint[:width], c.color_pair(4))
+            return
+        yy = y + 2 + used + 1
+        self.safe(yy, x, f"bg {colors['bg']}   fg {colors['fg']}"[:width], c.color_pair(4))
 
     # ---- overlays ------------------------------------------------------- #
     def _changes_overlay(self):
@@ -1957,10 +2373,12 @@ class App:
             "  Enter         edit the selected option",
             "   • booleans toggle instantly",
             "   • enums/theme/font open a picker with live preview",
+            "   • theme picker shows a live colour card for each theme",
             "   • numbers: ↑↓ or +/- to step, or type a value",
             "   • bounded values (opacity, contrast): a slider — ←/→ to adjust",
-            "   • colors/text: type a value (#hex or name)",
-            "   • lists (keybind/palette/env): a add, e edit, d delete",
+            "   • colors/text: type a value (#hex or name); colours preview",
+            "   • lists (palette/env): a add, e edit, d delete",
+            "   • keybind: a/e open a builder — toggle modifiers, pick an action",
             "  u             reset the selected option to its default",
             "",
             "Session",

@@ -105,14 +105,21 @@ only ever see what's relevant to the machine you're on.
 Editors are typed to each option:
 
 - **booleans** toggle instantly
-- **enums / theme / font** open a searchable picker with live preview
+- **enums / font** open a searchable picker with live preview
+- **theme** opens the picker with a **live colour card** for the highlighted
+  theme — its 16-colour palette and a foreground-on-background sample, rendered
+  right beside the list so you see a theme before applying it
 - **bounded numbers** (opacity, `minimum-contrast`, …) open a **visual slider** —
   `←`/`→` to adjust, `PgUp`/`PgDn` for larger jumps, `Home`/`End` for the ends,
   all previewed live
 - **other numbers** step with `↑`/`↓` or `+`/`-`, or type a value
-- **colors / text** take a typed value (`#rrggbb` or a named color); colors show
-  a swatch
-- **lists** (`keybind`, `palette`, `env`, font fallbacks, …) get an add/edit/delete
+- **colors / text** take a typed value (`#rrggbb` or a named color); colours show
+  a swatch, and colour options preview the active palette in the detail pane
+- **keybindings** open a **guided builder** — toggle modifiers (`super`/`ctrl`/
+  `alt`/`shift`, where `super` is ⌘ on macOS), press or pick the key, and choose
+  the action from Ghostty's own action list; the result is validated before it's
+  added
+- **other lists** (`palette`, `env`, font fallbacks, …) get an add/edit/delete
   editor
 
 **Auto-apply off** stages your edits in memory instead of touching disk; press
