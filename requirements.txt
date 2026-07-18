@@ -1,0 +1,10 @@
+# SpookiUI has NO third-party Python dependencies.
+#
+# It runs on the Python 3.8+ standard library alone (curses ships with CPython
+# on macOS and Linux). This file exists only so `pip install -r requirements.txt`
+# succeeds and to document the real requirements below:
+#
+#   - Python >= 3.8
+#   - the `ghostty` binary on PATH (or /Applications/Ghostty.app on macOS)
+#
+# Run ./install.sh to check both and put `spookiui` on your PATH.
