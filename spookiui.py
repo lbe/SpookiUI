@@ -39,7 +39,7 @@ import urllib.error
 import urllib.request
 from dataclasses import dataclass, field
 
-__version__ = "1.6.0"
+__version__ = "1.7.0"
 GITHUB_REPO = "mattj85/SpookiUI"
 
 
@@ -472,6 +472,27 @@ CATEGORY_ORDER = [
 # maintenance actions (e.g. Fix SSH) instead of Ghostty options. Opening it
 # (Enter/→) launches the Utils menu overlay.
 UTILS_CATEGORY = "⚙ Utils"
+
+# Nerd Font glyphs shown beside each root category when a Nerd Font is in use
+# (see icons_available()). Codepoints are FontAwesome-range nf-fa-* icons; if a
+# Nerd Font isn't the terminal font they'd render as tofu, so icons stay off.
+CATEGORY_ICONS = {
+    "Colors & Theme": "",       # paint brush
+    "Font": "",                 # font
+    "Cursor": "",               # i-cursor
+    "Window": "",               # window
+    "Spacing & Metrics": "",    # arrows
+    "Mouse": "",                # mouse pointer
+    "Clipboard & Selection": "",  # clipboard
+    "Quick Terminal": "",       # terminal
+    "Shell & Commands": "",     # code
+    "Keybindings": "",          # keyboard
+    "macOS": "",                # apple
+    "Linux / GTK": "",          # linux
+    "Advanced": "",             # cogs
+    UTILS_CATEGORY: "",         # cog
+}
+DEFAULT_CATEGORY_ICON = ""      # folder
 
 
 def _categorize(name: str) -> str:
@@ -1216,11 +1237,55 @@ class Session:
         return self.load_profile(target)
 
 
-def profiles_dir() -> str:
-    """Where named config snapshots live (cross-platform, outside Ghostty's
-    own config dir so Ghostty never reads them)."""
+def spookiui_data_dir() -> str:
+    """SpookiUI's own data dir (cross-platform), for profiles and small markers."""
     base = os.environ.get("XDG_DATA_HOME") or os.path.expanduser("~/.local/share")
-    return os.path.join(base, "spookiui", "profiles")
+    return os.path.join(base, "spookiui")
+
+
+def profiles_dir() -> str:
+    """Where named config snapshots live, outside Ghostty's own config dir."""
+    return os.path.join(spookiui_data_dir(), "profiles")
+
+
+def icons_available(sess: "Session") -> bool:
+    """Whether to show Nerd Font category icons. We can't ask the terminal if a
+    glyph will render, so we key off the strongest signal we have: the terminal
+    (Ghostty) font. `SPOOKIUI_ICONS=1/0` forces it on/off."""
+    env = os.environ.get("SPOOKIUI_ICONS", "").strip().lower()
+    if env in ("1", "true", "yes", "on"):
+        return True
+    if env in ("0", "false", "no", "off"):
+        return False
+    for fam in sess.effective_list("font-family"):
+        low = fam.lower()
+        if "nerd font" in low or "nerdfont" in low:
+            return True
+    return False
+
+
+def _icon_notice_marker() -> str:
+    return os.path.join(spookiui_data_dir(), "icon-notice-shown")
+
+
+def icon_notice_text() -> str:
+    """Platform-specific guidance for enabling Nerd Font icons."""
+    if IS_MACOS:
+        install = ("  macOS:  brew install --cask font-symbols-only-nerd-font\n"
+                   "          (or a full one, e.g. font-jetbrains-mono-nerd-font)")
+    elif IS_LINUX:
+        install = ("  Linux:  install a Nerd Font from https://www.nerdfonts.com\n"
+                   "          (or your distro's package), then run `fc-cache -f`")
+    else:
+        install = "  Install a Nerd Font from https://www.nerdfonts.com"
+    return (
+        "SpookiUI can show an icon beside each category, but that needs a Nerd Font\n"
+        "as your terminal font. None is set, so icons are off for now.\n\n"
+        "To enable them:\n"
+        f"{install}\n"
+        "  Then set it in SpookiUI: open the \"Font\" category and set font-family\n"
+        "  to your Nerd Font (e.g. \"JetBrainsMono Nerd Font\").\n"
+        "  Or set SPOOKIUI_ICONS=1 to force icons on.\n")
 
 
 _PROFILE_NAME_RE = re.compile(r"^[A-Za-z0-9._-]{1,64}$")
@@ -1504,22 +1569,52 @@ def run_tui(sess: "Session") -> None:
         locale.setlocale(locale.LC_ALL, "")
     except locale.Error:
         pass
+
+    icons = icons_available(sess)
+    if not icons:
+        _maybe_show_icon_notice()
+
     try:
         curses.set_escdelay(25)
     except Exception:
         pass
     try:
-        curses.wrapper(lambda scr: App(scr, sess).run())
+        curses.wrapper(lambda scr: App(scr, sess, icons=icons).run())
     except KeyboardInterrupt:
         pass
 
 
+def _maybe_show_icon_notice() -> None:
+    """Once, before entering the TUI, tell the user how to enable category icons.
+    Never blocks the app — on any hiccup we just continue into the fallback view."""
+    marker = _icon_notice_marker()
+    try:
+        if os.path.exists(marker):
+            return
+    except OSError:
+        return
+    try:
+        print(icon_notice_text())
+        input("Press Enter to continue… ")
+    except (EOFError, KeyboardInterrupt):
+        pass
+    except Exception:  # noqa: BLE001 — a notice must never stop the app launching
+        return
+    try:
+        os.makedirs(spookiui_data_dir(), exist_ok=True)
+        with open(marker, "w", encoding="utf-8") as fh:
+            fh.write("shown\n")
+    except OSError:
+        pass
+
+
 class App:
-    def __init__(self, stdscr, sess: Session):
+    def __init__(self, stdscr, sess: Session, icons: bool = False):
         import curses
         self.curses = curses
         self.scr = stdscr
         self.sess = sess
+        self.icons = icons
         self.status = ""
         self.status_kind = "info"
         self.focus = "cats"
@@ -1776,7 +1871,7 @@ class App:
 
     def _draw_columns(self, top, bottom, w):
         c = self.curses
-        cat_w = 22
+        cat_w = 24 if self.icons else 22
         opt_w = max(28, min(40, (w - cat_w) // 2))
         det_x = cat_w + opt_w + 1
 
@@ -1785,7 +1880,12 @@ class App:
             if y > bottom:
                 break
             attr = c.A_NORMAL
-            label = f" {cat}"
+            if self.icons:
+                icon = CATEGORY_ICONS.get(cat, DEFAULT_CATEGORY_ICON)
+                name = "Utils" if cat == UTILS_CATEGORY else cat
+                label = f" {icon}  {name}"
+            else:
+                label = f" {cat}"
             if self.search_mode:
                 attr = c.color_pair(4)
             elif i == self.cat_idx:
@@ -2996,6 +3096,7 @@ class App:
             "  q   quit",
             "",
             "Options that only apply to the other OS are hidden automatically.",
+            "Category icons need a Nerd Font terminal font (SPOOKIUI_ICONS=1 forces them).",
             "",
             "Live reload works by clicking Ghostty's 'Reload Configuration'",
             "menu item on macOS, or sending it SIGUSR2 on Linux. A timestamped",

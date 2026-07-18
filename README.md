@@ -152,6 +152,12 @@ be applied without a restart at all; the UI flags these as *needs restart* /
 | `d` | show everything you've changed |
 | `?` | help · `q` quit |
 
+When your terminal font is a **Nerd Font**, each category in the left column
+gets an icon (palette, font, cursor, apple/linux, …). SpookiUI detects this from
+Ghostty's `font-family`; if no Nerd Font is set it shows a one-time note on how
+to install one for your platform and then runs without icons. Force it either
+way with `SPOOKIUI_ICONS=1` / `SPOOKIUI_ICONS=0`.
+
 Editors are typed to each option:
 
 - **booleans** toggle instantly
