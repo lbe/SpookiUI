@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Learned By Error
+// SPDX-License-Identifier: MIT
+
 package main
 
 import (

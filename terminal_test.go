@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Learned By Error
+// SPDX-License-Identifier: MIT
+
 package main
 
 import (
@@ -346,82 +349,82 @@ func TestFrameBuffer(t *testing.T) {
 		{
 			"plain text", 24, 80,
 			func(fb *frameBuffer) { fb.addstr(0, 0, "hi", textAttr{}) },
-			"\x1b[1;1H\x1b[0mhi",
+			"\x1b[1;1H\x1b[0mhi\x1b[0m",
 		},
 		{
 			"positioned", 24, 80,
 			func(fb *frameBuffer) { fb.addstr(2, 4, "x", textAttr{}) },
-			"\x1b[3;5H\x1b[0mx",
+			"\x1b[3;5H\x1b[0mx\x1b[0m",
 		},
 		{
 			"bold", 24, 80,
 			func(fb *frameBuffer) { fb.addstr(0, 0, "hi", textAttr{bold: true}) },
-			"\x1b[1;1H\x1b[0;1mhi",
+			"\x1b[1;1H\x1b[0;1mhi\x1b[0m",
 		},
 		{
 			"reverse", 24, 80,
 			func(fb *frameBuffer) { fb.addstr(0, 0, "hi", textAttr{reverse: true}) },
-			"\x1b[1;1H\x1b[0;7mhi",
+			"\x1b[1;1H\x1b[0;7mhi\x1b[0m",
 		},
 		{
 			"bold reverse", 24, 80,
 			func(fb *frameBuffer) { fb.addstr(0, 0, "hi", textAttr{bold: true, reverse: true}) },
-			"\x1b[1;1H\x1b[0;1;7mhi",
+			"\x1b[1;1H\x1b[0;1;7mhi\x1b[0m",
 		},
 		{
 			"pair 1 black on cyan", 24, 80,
 			func(fb *frameBuffer) { fb.addstr(0, 0, "hi", textAttr{pair: 1}) },
-			"\x1b[1;1H\x1b[0;30;46mhi",
+			"\x1b[1;1H\x1b[0;30;46mhi\x1b[0m",
 		},
 		{
 			"pair 2 cyan on default bg omitted", 24, 80,
 			func(fb *frameBuffer) { fb.addstr(0, 0, "hi", textAttr{pair: 2}) },
-			"\x1b[1;1H\x1b[0;36mhi",
+			"\x1b[1;1H\x1b[0;36mhi\x1b[0m",
 		},
 		{
 			"pair 4 bold white", 24, 80,
 			func(fb *frameBuffer) { fb.addstr(0, 0, "hi", textAttr{bold: true, pair: 4}) },
-			"\x1b[1;1H\x1b[0;1;37mhi",
+			"\x1b[1;1H\x1b[0;1;37mhi\x1b[0m",
 		},
 		{
 			"pair 9 black on yellow", 24, 80,
 			func(fb *frameBuffer) { fb.addstr(0, 0, "hi", textAttr{pair: 9}) },
-			"\x1b[1;1H\x1b[0;30;43mhi",
+			"\x1b[1;1H\x1b[0;30;43mhi\x1b[0m",
 		},
 		{
 			"direct 256 fg", 24, 80,
 			func(fb *frameBuffer) { fb.addstr(0, 0, "hi", textAttr{fg256: 196}) },
-			"\x1b[1;1H\x1b[0;38;5;196mhi",
+			"\x1b[1;1H\x1b[0;38;5;196mhi\x1b[0m",
 		},
 		{
 			"direct 256 bg", 24, 80,
 			func(fb *frameBuffer) { fb.addstr(0, 0, "hi", textAttr{bg256: 21}) },
-			"\x1b[1;1H\x1b[0;48;5;21mhi",
+			"\x1b[1;1H\x1b[0;48;5;21mhi\x1b[0m",
 		},
 		{
 			"direct 256 fg and bg", 24, 80,
 			func(fb *frameBuffer) { fb.addstr(0, 0, "hi", textAttr{fg256: 196, bg256: 21}) },
-			"\x1b[1;1H\x1b[0;38;5;196;48;5;21mhi",
+			"\x1b[1;1H\x1b[0;38;5;196;48;5;21mhi\x1b[0m",
 		},
 		{
 			"direct fg overrides pair fg, pair bg remains", 24, 80,
 			func(fb *frameBuffer) { fb.addstr(0, 0, "hi", textAttr{pair: 1, fg256: 196}) },
-			"\x1b[1;1H\x1b[0;38;5;196;46mhi",
+			"\x1b[1;1H\x1b[0;38;5;196;46mhi\x1b[0m",
 		},
 		{
 			"clipped to width minus one column", 24, 10,
 			func(fb *frameBuffer) { fb.addstr(0, 8, "abcd", textAttr{}) },
-			"\x1b[1;9H\x1b[0ma",
+			"\x1b[1;9H\x1b[0ma\x1b[0m",
 		},
 		{
 			"last column emits nothing", 24, 10,
 			func(fb *frameBuffer) { fb.addstr(0, 9, "ab", textAttr{}) },
-			"",
+			"\x1b[0m",
 		},
 		{
 			"row out of range", 24, 80,
 			func(fb *frameBuffer) { fb.addstr(24, 0, "ab", textAttr{}) },
-			"",
+			"\x1b[0m",
 		},
 		{
 			"negative coords", 24, 80,
@@ -429,17 +432,17 @@ func TestFrameBuffer(t *testing.T) {
 				fb.addstr(-1, 0, "ab", textAttr{})
 				fb.addstr(0, -1, "ab", textAttr{})
 			},
-			"",
+			"\x1b[0m",
 		},
 		{
 			"clip counts runes not bytes", 24, 10,
 			func(fb *frameBuffer) { fb.addstr(0, 5, "abédef", textAttr{}) },
-			"\x1b[1;6H\x1b[0mabéd",
+			"\x1b[1;6H\x1b[0mabéd\x1b[0m",
 		},
 		{
 			"empty text emits nothing", 24, 80,
 			func(fb *frameBuffer) { fb.addstr(0, 0, "", textAttr{bold: true}) },
-			"",
+			"\x1b[0m",
 		},
 		{
 			"visible cursor at edit point", 24, 80,
@@ -447,12 +450,12 @@ func TestFrameBuffer(t *testing.T) {
 				fb.addstr(0, 0, "prompt", textAttr{})
 				fb.showCursor(0, 3)
 			},
-			"\x1b[1;1H\x1b[0mprompt\x1b[?25h\x1b[1;4H",
+			"\x1b[1;1H\x1b[0mprompt\x1b[0m\x1b[?25h\x1b[1;4H",
 		},
 		{
 			"no cursor means no show sequence", 24, 80,
 			func(fb *frameBuffer) { fb.addstr(0, 0, "hi", textAttr{}) },
-			"\x1b[1;1H\x1b[0mhi",
+			"\x1b[1;1H\x1b[0mhi\x1b[0m",
 		},
 		{
 			"writes accumulate in order", 24, 80,
@@ -460,7 +463,7 @@ func TestFrameBuffer(t *testing.T) {
 				fb.addstr(0, 0, "ab", textAttr{pair: 4})
 				fb.addstr(1, 0, "cd", textAttr{})
 			},
-			"\x1b[1;1H\x1b[0;37mab\x1b[2;1H\x1b[0mcd",
+			"\x1b[1;1H\x1b[0;37mab\x1b[2;1H\x1b[0mcd\x1b[0m",
 		},
 	}
 	for _, c := range cases {

@@ -1,60 +1,100 @@
+> [!CAUTION]
+> **Experimental AI-generated fork.** This repository is a fork of
+> [mattj85/SpookiUI](https://github.com/mattj85/SpookiUI) (a single-file Python
+> tool) that was ported to Go in one shot by an AI agent, as an experiment to
+> test the one-shot capability of Kimi K3. The very first build of the port
+> already worked, except for one background rendering issue (blank areas of the
+> screen repainting with the wrong background color), which has since been
+> fixed. The goal of this fork is that the Go port behaves **exactly** like the
+> Python version — full behavioral parity with upstream. The Python original,
+> [`spookiui.py`](spookiui.py), is kept in this repo as the reference
+> implementation.
+
 # SpookiUI
+
+[![Go Reference](https://pkg.go.dev/badge/github.com/lbe/SpookiUI.svg)](https://pkg.go.dev/github.com/lbe/SpookiUI)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Go Version](https://img.shields.io/badge/Go-1.26.5-blue.svg)](https://go.dev/dl/)
+[![Go Report Card](https://goreportcard.com/badge/github.com/lbe/SpookiUI)](https://goreportcard.com/report/github.com/lbe/SpookiUI)
+[![Release](https://github.com/lbe/SpookiUI/actions/workflows/release.yml/badge.svg)](https://github.com/lbe/SpookiUI/actions/workflows/release.yml)
+[![CI](https://github.com/lbe/SpookiUI/actions/workflows/ci.yml/badge.svg)](https://github.com/lbe/SpookiUI/actions/workflows/ci.yml)
+[![codecov](https://codecov.io/gh/lbe/SpookiUI/branch/main/graph/badge.svg)](https://codecov.io/gh/lbe/SpookiUI)
 
 A **live configurator for the [Ghostty](https://ghostty.org) terminal**. Browse
 and edit *every* option Ghostty supports from an interactive terminal UI, and
 watch your changes apply **live** — when you run it inside a Ghostty window, the
 very terminal you're in repaints as you edit.
 
+This is the Go port of [mattj85/SpookiUI](https://github.com/mattj85/SpookiUI);
+all credit for the original design and implementation goes upstream.
+
 ![SpookiUI screenshot](demo/spookyui.png)
 
 ```
-./spookiui.py
+./spookiui
 ```
 
-<sub>Requires Python 3.8+ (standard library only — no pip installs) and the
-`ghostty` binary on your `PATH` (or in `/Applications/Ghostty.app`).</sub>
+<sub>SpookiUI is a single, dependency-free Go binary (standard library only, no
+CGO) for macOS and Linux. It needs the `ghostty` binary on your `PATH` (or in
+`/Applications/Ghostty.app`).</sub>
 
 ---
 
 ## Installation
 
-SpookiUI has **no third-party Python dependencies** — it's a single script that
-runs on the Python 3.8+ standard library. You can run it straight from the repo:
+### Download a release binary (recommended)
+
+Pre-built binaries for macOS and Linux (`spookiui_darwin_amd64`,
+`spookiui_darwin_arm64`, `spookiui_linux_amd64`, `spookiui_linux_arm64`) are
+published on the
+[GitHub releases page](https://github.com/lbe/SpookiUI/releases), alongside a
+`checksums.txt` with SHA-256 hashes. Download the one for your platform, verify
+it, and put it on your `PATH`:
 
 ```bash
-git clone https://github.com/mattj85/SpookiUI.git
-cd SpookiUI
-./spookiui.py
+curl -LO https://github.com/lbe/SpookiUI/releases/latest/download/spookiui_darwin_arm64
+curl -LO https://github.com/lbe/SpookiUI/releases/latest/download/checksums.txt
+grep spookiui_darwin_arm64 checksums.txt | shasum -a 256 -c -
+chmod +x spookiui_darwin_arm64
+mv spookiui_darwin_arm64 ~/.local/bin/spookiui
 ```
 
-Or run the installer (macOS & Linux) to check prerequisites and put a `spookiui`
-command on your `PATH`:
+Once installed, `spookiui update` self-updates in place to the newest release,
+verifying the download against the published SHA-256 checksums.
+
+### Build from source
+
+SpookiUI is a single `main.go` using **only the Go standard library** — no
+third-party dependencies, no CGO. You need Go 1.26+ (see
+[`go.mod`](go.mod)):
 
 ```bash
-./install.sh                     # installs to ~/.local/bin
+git clone https://github.com/lbe/SpookiUI.git
+cd SpookiUI
+go build -o spookiui .
+./spookiui
+```
+
+### The Python version's installer
+
+The repo also carries `install.sh` / `uninstall.sh` from upstream — note that
+these install the **Python** version (they verify Python 3.8+ and symlink
+`spookiui.py` into a bin directory as a `spookiui` command):
+
+```bash
+./install.sh                     # installs the Python script to ~/.local/bin
 PREFIX=/usr/local ./install.sh   # system-wide (may need sudo)
 ```
 
-The installer verifies Python 3.8+, checks for the `ghostty` binary (warning
-with install hints if it's missing), and symlinks `spookiui.py` into your bin
-directory. After it runs, `spookiui` and `spookiui --help` work from anywhere.
-
-To reverse it, run the uninstaller (pass the same `PREFIX` you installed with):
-
-```bash
-./uninstall.sh                   # remove the `spookiui` command
-PREFIX=/usr/local ./uninstall.sh # if you installed there
-./uninstall.sh --purge           # also delete SpookiUI's cache + saved profiles
-```
-
-It only removes the symlink it recognises as its own (never a file it didn't
-create, and never a Homebrew install — use `brew uninstall` for that), and
-leaves your Ghostty config and the repo untouched.
+They are kept for parity with upstream and for running the reference
+implementation; you do not need them for the Go binary.
 
 ### Homebrew (macOS & Linux)
 
-A Homebrew formula lives in [`homebrew/spookiui.rb`](homebrew/spookiui.rb). Once
-it's published to a tap repo named `homebrew-spookiui`, install with:
+A Homebrew formula lives in [`homebrew/spookiui.rb`](homebrew/spookiui.rb).
+**It currently installs the Python version** (it depends on `python@3.12` and
+wraps `spookiui.py`). Once it's published to a tap repo named
+`homebrew-spookiui`, install with:
 
 ```bash
 brew install mattj85/spookiui/spookiui
@@ -104,18 +144,17 @@ only ever see what's relevant to the machine you're on.
 ## Live reload by platform
 
 Ghostty can't watch its config file for changes, so SpookiUI triggers the reload
-for you. How that happens — and what it needs — depends on your OS:
+for you. How that happens — and what that needs — depends on your OS:
 
 | Platform | How the reload fires | Requirements |
 | --- | --- | --- |
 | **macOS** | Clicks the **Reload Configuration** menu item via AppleScript (`osascript`) | Ghostty must be running; your terminal needs **Accessibility** permission (*System Settings → Privacy & Security → Accessibility*). Ghostty is located on `PATH` or at `/Applications/Ghostty.app`. |
-| **Linux** | Sends **`SIGUSR2`** to the running Ghostty process(es), which Ghostty reloads on | Ghostty must be running; `pgrep` (from `procps`/`procps-ng`, present on essentially every distro) is used to find it. No extra permission needed. Works on any distribution — detection is generic (`sys.platform`), with no distro-specific code. |
+| **Linux** | Sends **`SIGUSR2`** to the running Ghostty process(es), which Ghostty reloads on | Ghostty must be running; `pgrep` (from `procps`/`procps-ng`, present on essentially every distro) is used to find it. No extra permission needed. Works on any distribution — detection is generic (`runtime.GOOS`), with no distro-specific code. |
 | **Other** | *No auto-reload* — the file is still written and validated | Trigger your own `reload_config` keybind in Ghostty to apply. |
 
-On **Linux**, Ghostty is found via `PATH` (`shutil.which`), falling back to
-`/usr/bin/ghostty` and `/usr/local/bin/ghostty`. Only Python 3.8+ (standard
-library) and the `ghostty` binary are required; live reload additionally needs
-`pgrep` and a running Ghostty instance.
+On **Linux**, Ghostty is found via `PATH`, falling back to `/usr/bin/ghostty`
+and `/usr/local/bin/ghostty`. The Go binary itself has no runtime dependencies;
+live reload additionally needs `pgrep` and a running Ghostty instance.
 
 If a reload can't be triggered (Ghostty isn't running, missing permission, or an
 unsupported platform), your change is **still written and validated safely** —
@@ -242,9 +281,9 @@ alias is the quick fix that needs no remote access.)
 Run it from the CLI too:
 
 ```bash
-./spookiui.py fix-ssh            # add the alias if it's missing
-./spookiui.py fix-ssh --check    # report whether it's present; change nothing
-./spookiui.py fix-ssh --explain  # print the full what/why, then exit
+./spookiui fix-ssh            # add the alias if it's missing
+./spookiui fix-ssh --check    # report whether it's present; change nothing
+./spookiui fix-ssh --explain  # print the full what/why, then exit
 ```
 
 ## Scriptable CLI
@@ -252,36 +291,36 @@ Run it from the CLI too:
 Everything the TUI does is also available non-interactively:
 
 ```bash
-./spookiui.py list [category]      # list options (＊ = changed from default)
-./spookiui.py list [category] --all # include options for the other OS
-./spookiui.py get   <key>          # print an option's current value
-./spookiui.py doc   <key>          # show an option's documentation + choices
-./spookiui.py set   <key> <value>… # set (writes + reloads live); repeat value for lists
-./spookiui.py set   <key> <v> --no-reload   # write without reloading
-./spookiui.py reset --yes          # clear config & restore all Ghostty defaults (backup kept)
-./spookiui.py version              # print version & check GitHub for a newer release
-./spookiui.py update               # update in place to the latest release (git pull or download)
-./spookiui.py profile save <name>  # snapshot the current config as a named profile
-./spookiui.py profile load <name>  # apply a saved profile (validated, backed up)
-./spookiui.py profile list         # list saved profiles  (also: show / delete / toggle)
-./spookiui.py profile toggle       # flip between the 'light' and 'dark' profiles
-./spookiui.py doctor               # health-check the config (duplicates, unknown keys, keybind clashes…)
-./spookiui.py fix-ssh              # fix garbled SSH sessions (adds a TERM=xterm-256color ssh alias)
-./spookiui.py fix-ssh --check      # report whether the SSH alias is present; change nothing
-./spookiui.py reload               # trigger a live reload
-./spookiui.py validate             # validate the current config
-./spookiui.py themes               # list installed themes
-./spookiui.py fonts                # list monospace font families
-./spookiui.py path                 # print the config file in use
+./spookiui list [category]      # list options (＊ = changed from default)
+./spookiui list [category] --all # include options for the other OS
+./spookiui get   <key>          # print an option's current value
+./spookiui doc   <key>          # show an option's documentation + choices
+./spookiui set   <key> <value>… # set (writes + reloads live); repeat value for lists
+./spookiui set   <key> <v> --no-reload   # write without reloading
+./spookiui reset --yes          # clear config & restore all Ghostty defaults (backup kept)
+./spookiui version              # print version & check GitHub for a newer release
+./spookiui update               # update in place to the latest release (git pull or download)
+./spookiui profile save <name>  # snapshot the current config as a named profile
+./spookiui profile load <name>  # apply a saved profile (validated, backed up)
+./spookiui profile list         # list saved profiles  (also: show / delete / toggle)
+./spookiui profile toggle       # flip between the 'light' and 'dark' profiles
+./spookiui doctor               # health-check the config (duplicates, unknown keys, keybind clashes…)
+./spookiui fix-ssh              # fix garbled SSH sessions (adds a TERM=xterm-256color ssh alias)
+./spookiui fix-ssh --check      # report whether the SSH alias is present; change nothing
+./spookiui reload               # trigger a live reload
+./spookiui validate             # validate the current config
+./spookiui themes               # list installed themes
+./spookiui fonts                # list monospace font families
+./spookiui path                 # print the config file in use
 ```
 
 Examples:
 
 ```bash
-./spookiui.py set theme "Catppuccin Latte"
-./spookiui.py set font-size 15
-./spookiui.py set font-family "JetBrains Mono" "Symbols Nerd Font"   # primary + fallback
-./spookiui.py doc background-opacity
+./spookiui set theme "Catppuccin Latte"
+./spookiui set font-size 15
+./spookiui set font-family "JetBrains Mono" "Symbols Nerd Font"   # primary + fallback
+./spookiui doc background-opacity
 ```
 
 ## Notes & limitations
@@ -295,6 +334,22 @@ Examples:
 - The config path is auto-detected (`$XDG_CONFIG_HOME/ghostty/config`, then
   `~/.config/ghostty/config`, then the macOS app-support path).
 
+## Development
+
+The Go port is a single [`main.go`](main.go) — standard library only, no CGO —
+currently at **v2.8.0**. It is covered by **127 tests** (unit tests, CLI
+end-to-end tests against a stub `ghostty`, and TUI tests); run them with:
+
+```bash
+go test ./...
+```
+
+CI ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) runs golangci-lint
+and the test suite on linux/amd64, linux/arm64, darwin/amd64, and darwin/arm64,
+plus cross-builds. Releases ([`.github/workflows/release.yml`](.github/workflows/release.yml))
+publish the four platform binaries plus `checksums.txt` as GitHub release
+assets — see [`RELEASING.md`](RELEASING.md) for the bump-and-release flow.
+
 ## Updates
 
 On startup SpookiUI quietly checks GitHub for a newer release. If one exists, the
@@ -302,21 +357,26 @@ TUI shows a `⬆ UPDATE vX.Y.Z` badge in the header (and *press `U` to update* o
 status line); the help screen (`?`) always shows your current version. Run
 `spookiui version` any time to check on demand.
 
-The check is **best-effort and non-blocking** — it runs on a background thread,
-times out quickly, and stays silent if you're offline or GitHub is unreachable.
-The result is cached for a day (under `$XDG_CACHE_HOME/spookiui/`) so it never
-hammers the API. To turn it off entirely, set `SPOOKIUI_NO_UPDATE_CHECK=1`.
+The check is **best-effort and non-blocking** — it runs in a background
+goroutine, times out quickly, and stays silent if you're offline or GitHub is
+unreachable. The result is cached for a day (under `$XDG_CACHE_HOME/spookiui/`)
+so it never hammers the API. To turn it off entirely, set
+`SPOOKIUI_NO_UPDATE_CHECK=1`.
 
 ### Updating in place — no `git pull` needed
 
 Press `U` in the TUI, or run `spookiui update`. No update server is involved —
-GitHub is the source, and SpookiUI is a single file, so updating just swaps that
-file:
+GitHub is the source, and SpookiUI is a single binary, so updating just swaps
+that binary:
 
-- **Git checkout** (the default `install.sh` layout) → it runs `git pull` for you.
-- **Standalone copy** → it downloads the latest release's `spookiui.py`, *verifies
-  it compiles*, then atomically replaces the file (keeping a `.prev` backup). A
-  truncated or bad download can never leave you with a broken tool.
+- **Git checkout** → it runs `git pull --ff-only` for you (if the pull fails, it
+  tells you the exact command to run yourself). Rebuild with `go build` to run
+  the new code.
+- **Standalone binary** → it downloads the matching release asset for your
+  OS/arch, **verifies its SHA-256 against the release's `checksums.txt`**, then
+  atomically replaces the binary (keeping a `.prev` backup). A truncated or bad
+  download can never leave you with a broken tool.
+- **Homebrew install** → it defers to `brew upgrade spookiui`.
 - **No write permission** (e.g. installed system-wide as root) → it tells you the
   exact command to run instead of failing silently.
 
@@ -328,4 +388,5 @@ bump-and-release flow.
 
 ## License
 
-MIT — see [`LICENSE`](LICENSE).
+MIT — see [`LICENSE`](LICENSE). Original Python version ©
+[mattj85](https://github.com/mattj85/SpookiUI).

@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Learned By Error
+// SPDX-License-Identifier: MIT
+
 // SpookiUI — a live configurator for the Ghostty terminal (Go port).
 //
 // Run with no arguments to launch the interactive TUI (see runTUI). A
@@ -685,6 +688,8 @@ func enumValuesFromDoc(doc string) []string {
 	return vals
 }
 
+// classify infers an option's Kind, Values and ReloadNote from its name,
+// default and scraped doc text (Python's _classify).
 func classify(opt *Option) {
 	name, dflt := opt.Name, opt.Default
 	docLow := strings.ToLower(opt.Doc)
@@ -795,7 +800,7 @@ var categoryOrder = []string{
 }
 
 // utilsCategory is a synthetic left-pane category that isn't schema-backed:
-// it lists one-shot maintenance actions (e.g. Fix SSH). (TUI phase.)
+// it lists one-shot maintenance actions (e.g. Fix SSH).
 const utilsCategory = "⚙ Utils"
 
 // Nerd Font glyphs shown beside each root category when a Nerd Font is in
@@ -819,6 +824,8 @@ var categoryIcons = map[string]string{
 
 const defaultCategoryIcon = "\uf07b" // folder
 
+// categorize maps an option name to its left-pane category (Python's
+// _categorize).
 func categorize(name string) string {
 	n := name
 	switch n {
@@ -1069,17 +1076,22 @@ const managedHeader = "# ─────────── added by SpookiUI ─
 
 var legacyHeaders = []string{"# ─────────── added by GhostlyConfig ───────────"}
 
+// ConfigFile is a Ghostty config file held as raw lines and edited in
+// place, preserving comments, ordering and unrelated entries (Python's
+// ConfigFile).
 type ConfigFile struct {
 	Path  string
 	Lines []string
 }
 
+// NewConfigFile loads path; a missing file starts empty.
 func NewConfigFile(path string) *ConfigFile {
 	cf := &ConfigFile{Path: path}
 	cf.Reload()
 	return cf
 }
 
+// Reload re-reads the file from disk; an unreadable file becomes empty.
 func (cf *ConfigFile) Reload() {
 	data, err := os.ReadFile(cf.Path)
 	if err != nil {
@@ -1103,6 +1115,7 @@ func (cf *ConfigFile) keyAt(i int) (string, string, bool) {
 	return m[2], m[4], true
 }
 
+// IndicesOf returns the line indexes of every occurrence of name.
 func (cf *ConfigFile) IndicesOf(name string) []int {
 	var out []int
 	for i := range cf.Lines {
@@ -1114,6 +1127,7 @@ func (cf *ConfigFile) IndicesOf(name string) []int {
 	return out
 }
 
+// GetValues returns every value for name, in file order, unquoted.
 func (cf *ConfigFile) GetValues(name string) []string {
 	var vals []string
 	for _, i := range cf.IndicesOf(name) {
@@ -1166,7 +1180,8 @@ func (cf *ConfigFile) SetScalar(name, value string) {
 }
 
 // SetList replaces every occurrence of a repeated key, inserting the new
-// lines where the first occurrence was.
+// lines where the first occurrence was; an empty values list deletes all
+// occurrences.
 func (cf *ConfigFile) SetList(name string, values []string) {
 	idxs := cf.IndicesOf(name)
 	var newLines []string
@@ -1234,6 +1249,7 @@ func (cf *ConfigFile) appendManaged(newLines []string) {
 	cf.Lines = append(cf.Lines, newLines...)
 }
 
+// Render joins the lines back into file text.
 func (cf *ConfigFile) Render() string {
 	return strings.Join(cf.Lines, "\n")
 }
@@ -1279,6 +1295,7 @@ func (cf *ConfigFile) Backup() string {
 	return dst
 }
 
+// unquote trims space and strips one layer of double quotes, unescaping \".
 func unquote(v string) string {
 	v = strings.TrimSpace(v)
 	if len(v) >= 2 && v[0] == '"' && v[len(v)-1] == '"' {
@@ -1342,6 +1359,8 @@ func reloadGhostty() (bool, string) {
 	return false, "auto-reload not supported on this platform; press your reload_config keybind"
 }
 
+// reloadMacOS clicks Ghostty's "Reload Configuration" menu item via
+// AppleScript, mapping common failures to actionable messages.
 func reloadMacOS() (bool, string) {
 	script := `tell application "System Events" to tell process "Ghostty" to ` +
 		`click menu item "Reload Configuration" of menu 1 of ` +
@@ -1421,6 +1440,7 @@ func reloadLinux() (bool, string) {
 	return false, "Ghostty doesn't appear to be running"
 }
 
+// isGhosttyRunning reports whether any Ghostty process is alive (best effort).
 func isGhosttyRunning() bool {
 	proc, err := runCmd([]string{"pgrep", "-x", "ghostty"}, 5*time.Second)
 	if err == nil && strings.TrimSpace(proc.stdout) != "" {
@@ -1432,6 +1452,8 @@ func isGhosttyRunning() bool {
 
 // ---- Listings (themes, fonts, actions, keybinds) ----
 
+// listThemes returns theme names from `ghostty +list-themes`, with the
+// "(resources)"/"(user)" suffixes stripped (Python's list_themes).
 func listThemes() []string {
 	if ghosttyPath == "" {
 		return nil
@@ -1456,6 +1478,8 @@ func listThemes() []string {
 	return themes
 }
 
+// listFonts returns the deduplicated monospace font families from
+// `ghostty +list-fonts` (Python's list_fonts).
 func listFonts() []string {
 	if ghosttyPath == "" {
 		return nil
@@ -1599,6 +1623,8 @@ func ghosttyResourcesDir() string {
 	return ""
 }
 
+// themeSearchDirs lists the directories searched for theme files, in order
+// (Python's theme_search_dirs).
 func themeSearchDirs() []string {
 	var dirs []string
 	if xdg := os.Getenv("XDG_CONFIG_HOME"); xdg != "" {
@@ -1615,6 +1641,8 @@ func themeSearchDirs() []string {
 	return dirs
 }
 
+// findThemeFile locates a theme by name across themeSearchDirs (Python's
+// find_theme_file).
 func findThemeFile(name string) string {
 	name = strings.TrimSpace(name)
 	if name == "" {
@@ -1791,6 +1819,9 @@ func killUSR2(pid int) error {
 
 // ---- Session: staged edits, apply/revert, profiles ----
 
+// Session bundles the parsed schema and the working config for one run:
+// staged edits with validate/backup/write/reload discipline, revert, and
+// named profiles (Python's Session).
 type Session struct {
 	Schema       map[string]*Option
 	Cfg          *ConfigFile
@@ -1800,6 +1831,8 @@ type Session struct {
 	Dirty        bool
 }
 
+// NewSession loads the schema from the ghostty binary and opens the active
+// config file.
 func NewSession() (*Session, error) {
 	schema, err := loadSchema()
 	if err != nil {
@@ -1831,6 +1864,8 @@ func (s *Session) Effective(name string) string {
 	return ""
 }
 
+// EffectiveList is Effective for repeated keys: user values, else the
+// schema defaults.
 func (s *Session) EffectiveList(name string) []string {
 	if vals := s.Cfg.GetValues(name); len(vals) > 0 {
 		return vals
@@ -1841,6 +1876,8 @@ func (s *Session) EffectiveList(name string) []string {
 	return nil
 }
 
+// IsOverridden reports whether name is set in the config to a non-default
+// value. Keys unknown to the schema count as overridden.
 func (s *Session) IsOverridden(name string) bool {
 	if len(s.Cfg.IndicesOf(name)) == 0 {
 		return false
@@ -1867,16 +1904,19 @@ func stringSlicesEqual(a, b []string) bool {
 	return true
 }
 
+// StageScalar edits the in-memory config only; Apply persists.
 func (s *Session) StageScalar(name, value string) {
 	s.Cfg.SetScalar(name, value)
 	s.Dirty = true
 }
 
+// StageList is StageScalar for repeated keys.
 func (s *Session) StageList(name string, values []string) {
 	s.Cfg.SetList(name, values)
 	s.Dirty = true
 }
 
+// StageUnset comments name out of the in-memory config.
 func (s *Session) StageUnset(name string) {
 	s.Cfg.Unset(name)
 	s.Dirty = true
@@ -1908,6 +1948,8 @@ func (s *Session) Apply() (bool, string) {
 	return true, "saved (auto-apply off — press 's'/reload to apply live)"
 }
 
+// RevertAll restores the config to its session-start text, live (Python's
+// Session.revert_all).
 func (s *Session) RevertAll() (bool, string) {
 	s.Cfg.Lines = strings.Split(s.OriginalText, "\n")
 	s.Dirty = false
@@ -1952,6 +1994,7 @@ func (s *Session) RestoreDefaults() (bool, string) {
 	return true, "restored Ghostty defaults"
 }
 
+// override is one changed-from-default option shown by Overrides.
 type override struct {
 	Name  string
 	Value string
@@ -2040,6 +2083,7 @@ func (s *Session) LoadProfile(name string) (bool, string) {
 	return true, fmt.Sprintf("loaded profile '%s'", name)
 }
 
+// DeleteProfile removes a named profile snapshot.
 func (s *Session) DeleteProfile(name string) (bool, string) {
 	path := profilePath(name)
 	if !isFile(path) {
@@ -2086,10 +2130,12 @@ func profilesDir() string {
 
 var profileNameRe = regexp.MustCompile(`^[A-Za-z0-9._-]{1,64}$`)
 
+// profilePath is the on-disk path of a named profile.
 func profilePath(name string) string {
 	return filepath.Join(profilesDir(), name)
 }
 
+// listProfiles returns the saved profile names, sorted.
 func listProfiles() []string {
 	entries, err := os.ReadDir(profilesDir())
 	if err != nil {
@@ -2125,6 +2171,8 @@ func iconsAvailable(sess *Session) bool {
 	return false
 }
 
+// iconNoticeMarker is the sentinel file recording that the one-time icon
+// notice was shown (Python's _icon_notice_marker).
 func iconNoticeMarker() string {
 	return filepath.Join(spookiuiDataDir(), "icon-notice-shown")
 }
@@ -2153,7 +2201,7 @@ func iconNoticeText() string {
 
 // maybeShowIconNotice tells the user once, before entering the TUI, how to
 // enable category icons. Never blocks the app — on any hiccup we just
-// continue into the fallback view. (Used by the TUI phase.)
+// continue into the fallback view. Called once from runTUI.
 func maybeShowIconNotice(out io.Writer, in io.Reader) {
 	marker := iconNoticeMarker()
 	if fileExists(marker) {
@@ -2174,6 +2222,7 @@ func maybeShowIconNotice(out io.Writer, in io.Reader) {
 
 // ---- Doctor: config health check ----
 
+// finding is one doctor result.
 type finding struct {
 	Severity string // error / warn / info / ok
 	Message  string
@@ -2405,6 +2454,7 @@ func applySSHFix() (bool, string) {
 
 const usageLine = "usage: spookiui [-h] [-V] <command> [args]"
 
+// helpText is the CLI help, mirroring the Python's argparse output.
 func helpText() string {
 	return usageLine + `
 
@@ -2870,7 +2920,7 @@ func cliFixSSH(sess *Session, args []string, stdout, stderr io.Writer) int {
 // This section replaces Python's curses: termios raw mode via ioctl, the
 // alternate screen, a whole-frame renderer (one write per frame), a pure
 // escape-sequence key parser feeding a reader goroutine, and signal wiring.
-// The TUI phase (runTUI) consumes this layer; it is not wired up yet.
+// runTUI wires this layer to the App.
 
 // termioctls returns the get/set termios ioctl request numbers for goos.
 // The values are declared locally: syscall exports TIOCGETA/TIOCSETA only on
@@ -2973,7 +3023,9 @@ func openTerm(in, out *os.File) (*Term, error) {
 		color256: supports256Color(os.Getenv("TERM"), os.Getenv("COLORTERM")),
 	}
 	// Alternate screen, hide cursor, clear and home for the first frame.
-	if _, err := out.Write([]byte("\x1b[?1049h\x1b[?25l\x1b[2J\x1b[H")); err != nil {
+	// The erase is preceded by an SGR reset: terminals erase with the
+	// *current* background, and the shell may have left one set.
+	if _, err := out.Write([]byte("\x1b[?1049h\x1b[?25l\x1b[0m\x1b[2J\x1b[H")); err != nil {
 		t.Close()
 		return nil, fmt.Errorf("entering alternate screen: %w", err)
 	}
@@ -3137,9 +3189,15 @@ func (fb *frameBuffer) showCursor(y, x int) {
 	fb.cursorOn, fb.cursorY, fb.cursorX = true, y, x
 }
 
-// render finalizes the frame and returns its bytes.
+// render finalizes the frame and returns its bytes. The frame always ends
+// with an SGR reset (before any cursor parking, so the parked cursor also
+// sits in default attributes): leaked color state would otherwise tint the
+// next frame's erase, since terminals erase with the current background.
 func (fb *frameBuffer) render() []byte {
+	//nolint:errcheck // bytes.Buffer writes cannot fail
+	fb.buf.Write([]byte("\x1b[0m"))
 	if fb.cursorOn {
+		//nolint:errcheck // bytes.Buffer writes cannot fail
 		fb.buf.Write([]byte("\x1b[?25h"))
 		fmt.Fprintf(&fb.buf, "\x1b[%d;%dH", fb.cursorY+1, fb.cursorX+1)
 	}
@@ -3451,6 +3509,8 @@ type eventMux struct {
 	sigch  chan os.Signal
 }
 
+// newEventMux subscribes to SIGWINCH/SIGINT/SIGTERM and starts the
+// dispatch goroutine; stop detaches.
 func newEventMux(kr *keyReader, cleanup func()) *eventMux {
 	m := &eventMux{
 		Keys:   kr.events,
@@ -3462,6 +3522,7 @@ func newEventMux(kr *keyReader, cleanup func()) *eventMux {
 	return m
 }
 
+// dispatch routes signals onto the event channels until sigch is closed.
 func (m *eventMux) dispatch(cleanup func()) {
 	for sig := range m.sigch {
 		switch sig {
@@ -3670,6 +3731,7 @@ func (a *App) startUpdateCheck() {
 	}()
 }
 
+// updateInfo returns the background update-check result, or nil.
 func (a *App) updateInfo() *updateInfo {
 	a.mu.Lock()
 	defer a.mu.Unlock()
@@ -3717,11 +3779,13 @@ func (a *App) msg(text, kind string) {
 }
 
 // newScreen starts a fresh full-screen frame; the leading ESC[2J is Python's
-// scr.erase() (our frames are full redraws).
+// scr.erase() (our frames are full redraws). Attributes are reset first:
+// terminals erase with the *current* background (BCE), so a leaked color
+// pair would repaint all blank cells.
 func (a *App) newScreen() {
 	a.fb = newFrameBuffer(a.rows, a.cols)
 	//nolint:errcheck // bytes.Buffer writes cannot fail
-	a.fb.buf.Write([]byte("\x1b[2J"))
+	a.fb.buf.Write([]byte("\x1b[0m\x1b[2J"))
 }
 
 // run is Python App.run: draw, wait, dispatch, until a handler quits.
@@ -3753,6 +3817,8 @@ func (a *App) draw() {
 	a.flush()
 }
 
+// drawHeader renders the title bar with the status flags right-aligned
+// (Python App._draw_header).
 func (a *App) drawHeader(w int) {
 	title := " SpookiUI · live Ghostty configurator "
 	var flags []string
@@ -3777,6 +3843,8 @@ func (a *App) drawHeader(w int) {
 	a.fb.addstr(0, 0, bar, textAttr{pair: 1, bold: true})
 }
 
+// drawColumns renders the three panes: categories, options and detail
+// (Python App._draw_columns).
 func (a *App) drawColumns(top, bottom, w int) {
 	catW := 22
 	if a.icons {
@@ -3866,6 +3934,9 @@ func (a *App) drawColumns(top, bottom, w int) {
 	a.drawDetail(top, bottom, detX, w-detX-1)
 }
 
+// drawDetail renders the right-hand detail pane for the current option:
+// value, default, override state, colour preview and wrapped docs (Python
+// App._draw_detail).
 func (a *App) drawDetail(top, bottom, x, width int) {
 	if width < 10 {
 		return
@@ -4116,6 +4187,8 @@ func (a *App) currentOption() *Option {
 	return a.sess.Schema[names[a.optIdx]]
 }
 
+// drawFooter renders the status line and the context key hints (Python
+// App._draw_footer).
 func (a *App) drawFooter(h, w int) {
 	kindmap := map[string]int{"ok": 6, "error": 7, "warn": 8, "info": 2}
 	pair, ok := kindmap[a.statusKind]
@@ -4223,6 +4296,8 @@ func (a *App) handleKey(k KeyEvent) bool {
 	return a.handleOptKey(k)
 }
 
+// handleCatKey handles keys while the category pane is focused (Python
+// App._handle_cat_key).
 func (a *App) handleCatKey(k KeyEvent) bool {
 	n := len(a.categories)
 	switch {
@@ -4242,6 +4317,8 @@ func (a *App) handleCatKey(k KeyEvent) bool {
 	return true
 }
 
+// handleOptKey handles keys while the option pane is focused (Python
+// App._handle_opt_key).
 func (a *App) handleOptKey(k KeyEvent) bool {
 	names := a.currentNames()
 	switch {
@@ -4273,6 +4350,8 @@ func (a *App) handleOptKey(k KeyEvent) bool {
 
 // ---- Search ----
 
+// enterSearch opens search mode over all platform-visible options (Python
+// App._enter_search).
 func (a *App) enterSearch() {
 	a.search = ""
 	a.searchMode = true
@@ -4287,6 +4366,8 @@ func (a *App) enterSearch() {
 	a.optIdx, a.optScroll = 0, 0
 }
 
+// handleSearchKey handles keys in search mode: edits the query, moves the
+// cursor and re-filters on every change (Python App._handle_search_key).
 func (a *App) handleSearchKey(k KeyEvent) bool {
 	switch k.Kind {
 	case keyEscape:
@@ -4414,6 +4495,9 @@ func (a *App) commitList(opt *Option, values []string) (bool, []string) {
 	return true, nil
 }
 
+// resetCurrent unsets the current option, restoring its default, with the
+// same validate/backup/write/reload discipline as a commit (Python
+// App._reset_current).
 func (a *App) resetCurrent() {
 	opt := a.currentOption()
 	if opt == nil || !a.sess.IsOverridden(opt.Name) {
@@ -4442,6 +4526,8 @@ func (a *App) resetCurrent() {
 	a.msg(fmt.Sprintf("%s reset to default (%s)", opt.Name, orEmpty(opt.Default)), "ok")
 }
 
+// doSelfUpdate is the in-TUI update flow behind a y/N confirmation (Python
+// App._do_self_update).
 func (a *App) doSelfUpdate() {
 	info := a.updateInfo()
 	if info == nil || !info.Outdated {
@@ -4457,6 +4543,7 @@ func (a *App) doSelfUpdate() {
 	a.msg(m, kindFor(ok))
 }
 
+// editBool toggles a boolean option (Python App._edit_bool).
 func (a *App) editBool(opt *Option) {
 	cur := a.sess.Effective(opt.Name)
 	newVal := "true"
@@ -4506,6 +4593,7 @@ func (a *App) report(opt *Option, value string, ok bool, errs []string) {
 	}
 }
 
+// editEnum opens the value picker with live preview (Python App._edit_enum).
 func (a *App) editEnum(opt *Option) {
 	snap := a.snap()
 	cur := a.sess.Effective(opt.Name)
@@ -4520,6 +4608,8 @@ func (a *App) editEnum(opt *Option) {
 	a.report(opt, choice, ok2, errs)
 }
 
+// editTheme opens the theme picker with the colour-card side panel (Python
+// App._edit_theme).
 func (a *App) editTheme(opt *Option) {
 	a.msg("loading themes…", "info")
 	a.draw()
@@ -4542,6 +4632,9 @@ func (a *App) editTheme(opt *Option) {
 	a.report(opt, choice, ok2, errs)
 }
 
+// editFont opens the font picker for the primary font-family entry,
+// falling back to plain text entry when no fonts are listed (Python
+// App._edit_font).
 func (a *App) editFont(opt *Option) {
 	a.msg("loading fonts…", "info")
 	a.draw()
@@ -4567,6 +4660,8 @@ func (a *App) editFont(opt *Option) {
 	a.report(opt, choice, ok2, errs)
 }
 
+// editNumber edits an int/float with stepping keys or typed input, applying
+// each step live (Python App._edit_number).
 func (a *App) editNumber(opt *Option) {
 	snap := a.snap()
 	cur := a.sess.Effective(opt.Name)
@@ -4702,6 +4797,7 @@ func (a *App) editSlider(opt *Option, lo, hi, step float64) {
 	}
 }
 
+// drawSlider renders the slider screen (Python App._draw_slider).
 func (a *App) drawSlider(opt *Option, lo, hi, val float64, isFloat bool, frac float64) {
 	a.newScreen()
 	h, w := a.rows, a.cols
@@ -4738,6 +4834,8 @@ func (a *App) drawSlider(opt *Option, lo, hi, val float64, isFloat bool, frac fl
 	a.flush()
 }
 
+// editText edits a free-text option; colour options preview live on every
+// keystroke (Python App._edit_text).
 func (a *App) editText(opt *Option) {
 	snap := a.snap()
 	cur := a.sess.Effective(opt.Name)
@@ -4759,6 +4857,8 @@ func (a *App) editText(opt *Option) {
 	a.report(opt, v, ok2, errs)
 }
 
+// editList edits a repeated-key option as an add/edit/delete list; keybind
+// entries go through the guided builder (Python App._edit_list).
 func (a *App) editList(opt *Option) {
 	values := append([]string(nil), a.sess.EffectiveList(opt.Name)...)
 	sel := 0
@@ -4998,6 +5098,7 @@ func (a *App) editKeybindForm(initial string) (string, bool) {
 	}
 }
 
+// drawKeybindForm renders the keybind builder (Python App._draw_keybind_form).
 func (a *App) drawKeybindForm(st *keybindState, row, modsel int, errmsg string) {
 	a.newScreen()
 	h, w := a.rows, a.cols
@@ -5108,9 +5209,10 @@ func (a *App) lineEditor(label, initial, hint string, live func(string)) (string
 	}
 }
 
-// picker is Python App._picker: scrollable, type-to-filter list with a 90ms
-// debounce timer driving live preview when auto-apply is on. side, when
-// non-nil, draws a panel to the right of the list.
+// picker is Python App._picker: scrollable, type-to-filter list polling
+// events on a 90ms timeout (curses scr.timeout(90)); with auto-apply on,
+// the highlighted item previews live after 110ms without movement. side,
+// when non-nil, draws a panel to the right of the list.
 func (a *App) picker(title string, items []string, current string,
 	preview func(string), side func(item string, x, y, width int)) (string, bool) {
 	query := ""
@@ -5176,6 +5278,8 @@ func (a *App) picker(title string, items []string, current string,
 	}
 }
 
+// drawPicker renders the picker list, colour swatches and the optional
+// side panel (Python App._draw_picker).
 func (a *App) drawPicker(title, query string, filtered []string, sel int,
 	current string, side func(item string, x, y, width int)) {
 	a.newScreen()
@@ -5259,6 +5363,8 @@ func (a *App) drawThemeCard(name string, x, y, width int) {
 
 // ---- Overlays ----
 
+// changesOverlay lists every option changed from default (Python
+// App._changes_overlay).
 func (a *App) changesOverlay() {
 	ovr := a.sess.Overrides()
 	a.newScreen()
@@ -5284,6 +5390,8 @@ func (a *App) changesOverlay() {
 	a.nextEvent(0)
 }
 
+// profilesOverlay is the save/load/delete profile manager (Python
+// App._profiles_overlay).
 func (a *App) profilesOverlay() {
 	sel := 0
 	for {
@@ -5357,6 +5465,8 @@ func (a *App) profilesOverlay() {
 	}
 }
 
+// doctorOverlay shows the config health-check findings, scrollable (Python
+// App._doctor_overlay).
 func (a *App) doctorOverlay() {
 	a.msg("running config check…", "info")
 	a.draw()
@@ -5448,6 +5558,8 @@ func (a *App) utilsList() []utilEntry {
 	}}
 }
 
+// drawUtilsMenu renders the middle pane when the Utils category is selected
+// (Python App._draw_utils_menu).
 func (a *App) drawUtilsMenu(top, bottom, catW, optW int) {
 	x0 := catW + 1
 	utils := a.utilsList()
@@ -5463,6 +5575,8 @@ func (a *App) drawUtilsMenu(top, bottom, catW, optW int) {
 	}
 }
 
+// drawUtilsDetail renders the Utils detail pane: status and the wrapped
+// explanation (Python App._draw_utils_detail).
 func (a *App) drawUtilsDetail(top, bottom, x, width int) {
 	if width < 10 {
 		return
@@ -5508,6 +5622,7 @@ func (a *App) drawUtilsDetail(top, bottom, x, width int) {
 	}
 }
 
+// utilsOverlay runs the full-screen Utils menu (Python App._utils_overlay).
 func (a *App) utilsOverlay() {
 	utils := a.utilsList()
 	sel := 0
@@ -5576,6 +5691,7 @@ func (a *App) utilsOverlay() {
 	}
 }
 
+// utilsResult shows the outcome of a Utils action (Python App._utils_result).
 func (a *App) utilsResult(name string, ok bool, message string) {
 	a.newScreen()
 	h, w := a.rows, a.cols

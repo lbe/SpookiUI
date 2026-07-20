@@ -1,6 +1,10 @@
+// Copyright (c) 2026 Learned By Error
+// SPDX-License-Identifier: MIT
+
 package main
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -867,6 +871,28 @@ func TestTUINextEventClosedChannelQuits(t *testing.T) {
 	close(a.keys)
 	if k := a.nextEvent(0); k.Kind != keyCtrlC {
 		t.Fatalf("kind=%v", k.Kind)
+	}
+}
+
+// TestTUIFrameResetsAttrsAroundErase is the BCE regression test: a frame
+// whose last write leaves SGR at pair 1 (black on cyan, as drawFooter's hint
+// bar does) must not leak that background into the next frame's erase —
+// Ghostty/xterm erase blank cells with the *current* background color.
+func TestTUIFrameResetsAttrsAroundErase(t *testing.T) {
+	a := newTUIApp(t, "")
+	a.fb = newFrameBuffer(a.rows, a.cols)
+	a.fb.addstr(a.rows-1, 0, "footer", textAttr{pair: 1})
+	frame1 := a.fb.render()
+	if !bytes.HasSuffix(frame1, []byte("\x1b[0m")) {
+		t.Errorf("frame with pair-1 last write must end with SGR reset, got %q", frame1)
+	}
+	a.newScreen()
+	frame2 := a.fb.render()
+	if !bytes.HasPrefix(frame2, []byte("\x1b[0m\x1b[2J")) {
+		t.Errorf("new frame must reset SGR before erasing, got %q", frame2)
+	}
+	if !bytes.HasSuffix(frame2, []byte("\x1b[0m")) {
+		t.Errorf("new frame must end with SGR reset, got %q", frame2)
 	}
 }
 
