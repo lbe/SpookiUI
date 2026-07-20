@@ -1,0 +1,85 @@
+version: "2"
+linters:
+  default: none
+  enable:
+    - bodyclose
+    - errcheck
+    - errorlint
+    - gocritic
+    - govet
+    - ineffassign
+    - nilerr
+    - staticcheck
+    - testifylint
+    - unused
+  settings:
+    errcheck:
+      check-blank: true
+      exclude-functions:
+        # Common low-risk writes / closes
+        - (*os.File).Close
+        - (io.Closer).Close
+        - (*net/http.Response).Body.Close
+        - (*bytes.Buffer).Write
+        - (*strings.Builder).WriteString
+        - fmt.Fprintf
+        - fmt.Fprintln
+        - fmt.Fprint
+        # net/http ResponseWriter.Write: best-effort in handlers, never fails in test recorders
+        - (net/http.ResponseWriter).Write
+        # Test helpers that often intentionally ignore errors
+        - (*testing.T).Fatalf
+        - (*testing.T).Errorf
+    govet:
+      disable:
+        - fieldalignment
+      enable-all: true
+  exclusions:
+    generated: lax
+    presets:
+      - comments
+      - common-false-positives
+      - legacy
+      - std-error-handling
+    rules:
+      - linters:
+          - bodyclose
+        path: .*_test.go
+      - linters:
+          - errcheck
+        path: .*_test.go
+      - linters:
+          - bodyclose
+        path: router/timeout_response.go
+      # False positives on CGO generated code
+      - linters:
+          - staticcheck
+        path: vips/.*
+        text: "SA4000:"
+      # False positives on CGO generated code
+      - linters:
+          - gocritic
+        path: vips/.*
+        text: dupSubExpr
+      # False positives on CGO generated code
+      - linters:
+          - staticcheck
+        text: "ST1005:"
+    paths:
+      - .tmp
+      - vendor
+      - third_party$
+      - builtin$
+      - examples$
+formatters:
+  enable:
+    - goimports
+  exclusions:
+    generated: lax
+    paths:
+      - .tmp
+      - tmp
+      - vendor
+      - third_party$
+      - builtin$
+      - examples$
