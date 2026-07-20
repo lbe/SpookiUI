@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -215,21 +216,37 @@ func TestE2EList(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("list: code=%d", code)
 	}
-	for _, want := range []string{"== Font ==", "font-size", "== macOS ==", "macos-titlebar-style"} {
+	for _, want := range []string{"== Font ==", "font-size"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("list output missing %q:\n%s", want, out)
 		}
 	}
-	if strings.Contains(out, "gtk-single-instance") {
-		t.Error("linux-only option should be hidden on darwin without --all")
+	// Platform-specific options are filtered by the runtime OS.
+	switch runtime.GOOS {
+	case "darwin":
+		if !strings.Contains(out, "macos-titlebar-style") {
+			t.Error("macos option should be listed on darwin")
+		}
+		if strings.Contains(out, "gtk-single-instance") {
+			t.Error("linux-only option should be hidden on darwin without --all")
+		}
+	case "linux":
+		if !strings.Contains(out, "gtk-single-instance") {
+			t.Error("linux option should be listed on linux")
+		}
+		if strings.Contains(out, "macos-titlebar-style") {
+			t.Error("macos-only option should be hidden on linux without --all")
+		}
 	}
 	out, _, _ = e.run("list", "--all")
-	if !strings.Contains(out, "gtk-single-instance") {
-		t.Error("--all should show linux-only options")
+	for _, want := range []string{"gtk-single-instance", "macos-titlebar-style"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("--all should show %s", want)
+		}
 	}
 	// Category filter.
 	out, _, code = e.run("list", "Font")
-	if code != 0 || !strings.Contains(out, "font-size") || strings.Contains(out, "== macOS ==") {
+	if code != 0 || !strings.Contains(out, "font-size") || strings.Contains(out, "== Window ==") {
 		t.Errorf("list Font: code=%d\n%s", code, out)
 	}
 }
